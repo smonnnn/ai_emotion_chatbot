@@ -40,7 +40,7 @@ Guideline: Respond empathetically to a user expressing {emotion}.
 Generate a brief response:"""
         
         response = self.client.chat.completions.create(
-            model="mistral-small-latest",
+            model="magistral-small-2509",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=100,
             temperature=0.7
@@ -62,7 +62,7 @@ Guideline: {self.base_prompt}
 Generate a brief response:"""
         
         response = self.client.chat.completions.create(
-            model="mistral-small-latest",
+            model="magistral-small-2509",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=50,
             temperature=0.7
