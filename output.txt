@@ -1,0 +1,24 @@
+TEST 1: Clear emotional cue
+
+User: "I failed my exam. I studied so hard and still failed."
+--------------------------------------------------
+{'label': 'sadness', 'score': 0.654412031173706}
+With Emotion Detection:
+  Detected: sadness (0.65)
+  Response: "I'm really sorry to hear that. It's tough when you put in so much effort and still don't see the results you hoped for. How are you feeling right now?"
+
+With Baseline Prompting:
+  Response: "I'm really sorry to hear that. It's so frustrating to put in so much effort and still not see the results you wanted. How are you feeling right now?"
+
+
+TEST 2: Ambiguous/sarcastic input
+
+User: "Oh great, another amazing day. Just wonderful."
+--------------------------------------------------
+{'label': 'joy', 'score': 0.8279781937599182}
+With Emotion Detection:
+  Detected: joy (0.83)
+  Response: "Wow, it sounds like you're having an amazing day! I'm so happy for you—keep that wonderful energy going!" 😊
+
+With Baseline Prompting:
+  Response: "Sounds like you're having quite the day! Want to talk about it?"
