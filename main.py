@@ -2,6 +2,7 @@ import os
 from dotenv import load_dotenv
 from transformers import pipeline
 import openai
+from openai import OpenAI
 
 load_dotenv()
 
@@ -40,7 +41,7 @@ Guideline: Respond empathetically to a user expressing {emotion}.
 Generate a brief response:"""
         
         response = self.client.chat.completions.create(
-            model="magistral-small-2509",
+            model="mistral-small-latest",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=100,
             temperature=0.7
@@ -62,7 +63,7 @@ Guideline: {self.base_prompt}
 Generate a brief response:"""
         
         response = self.client.chat.completions.create(
-            model="magistral-small-2509",
+            model="mistral-small-latest",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=50,
             temperature=0.7
