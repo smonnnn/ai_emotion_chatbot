@@ -1,110 +1,104 @@
-import os
-from dotenv import load_dotenv
-from transformers import pipeline
-import openai
-from openai import OpenAI
+import torch
+from datasets import load_dataset
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from peft import LoraConfig
+from trl import SFTTrainer, SFTConfig
 
-load_dotenv()
+base_model_name = "google/gemma-3-1b-it"
+adapter_name = "google/gemma-3-1b-it-emotion-adapter"
 
-class EmotionChatbot:
-    def __init__(self, api_key=None):
-        # Emotion classifier
-        print("Loading emotion classifier...")
-        self.emotion_classifier = pipeline(
-            "text-classification",
-            model="j-hartmann/emotion-english-distilroberta-base",
-            top_k=1
-        )
-        
-        # OpenAI client
-        self.client = openai.OpenAI(
-            base_url="https://api.mistral.ai/v1",
-            api_key=api_key or os.getenv("MISTRAL_API_KEY")
-        )
-        
-        self.base_prompt = "Respond to the user empathetically and naturally."
-    
-    def classify_emotion(self, text: str) -> tuple:
-        #Classify emotion (returns label, confidence).
-        result = self.emotion_classifier(text)[0][0]
-        print(result)
-        return result['label'], result['score']
-    
-    def respond_with_emotion_detection(self, user_input: str) -> dict:
-        #Method 1: Explicit emotion detection.
-        emotion, confidence = self.classify_emotion(user_input)
-        
-        prompt = f"""
-User input: "{user_input}"
-Detected emotion: {emotion} (confidence: {confidence:.2f})
-Guideline: Respond empathetically to a user expressing {emotion}.
-Generate a brief response:"""
-        
-        response = self.client.chat.completions.create(
-            model="mistral-small-latest",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=100,
-            temperature=0.7
-        )
-        
-        return {
-            "method": "Emotion Detection",
-            "user_input": user_input,
-            "emotion": emotion,
-            "confidence": confidence,
-            "response": response.choices[0].message.content
-        }
-    
-    def respond_baseline(self, user_input: str) -> dict:
-        #Method 2: Simple empathetic prompting (your argument).
-        prompt = f"""
-User input: "{user_input}"
-Guideline: {self.base_prompt}
-Generate a brief response:"""
-        
-        response = self.client.chat.completions.create(
-            model="mistral-small-latest",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=50,
-            temperature=0.7
-        )
-        
-        return {
-            "method": "Baseline Prompting",
-            "user_input": user_input,
-            "emotion": "N/A",
-            "confidence": "N/A",
-            "response": response.choices[0].message.content
-        }
-    
-    def compare_methods(self, user_input: str) -> dict:
-        #Compare both methods side-by-side.
-        print(f"\nUser: \"{user_input}\"")
-        print("-" * 50)
-        
-        # Method 1: With emotion detection
-        result1 = self.respond_with_emotion_detection(user_input)
-        print(f"With Emotion Detection:")
-        print(f"  Detected: {result1['emotion']} ({result1['confidence']:.2f})")
-        print(f"  Response: {result1['response']}")
-        
-        # Method 2: Baseline
-        result2 = self.respond_baseline(user_input)
-        print(f"\nWith Baseline Prompting:")
-        print(f"  Response: {result2['response']}")
-        
-        return {"with_detection": result1, "baseline": result2}
+# Load model and tokenizer
+base_model = AutoModelForCausalLM.from_pretrained(
+    base_model_name,
+    trust_remote_code=True,
+    torch_dtype=torch.bfloat16
+)
 
-def run_assignment_tests():
-    bot = EmotionChatbot()
-    
-    # Test 1: Clear negative emotion (should work)
-    print("TEST 1: Clear emotional cue")
-    bot.compare_methods("I failed my exam. I studied so hard and still failed.")
-    
-    # Test 2: Sarcastic/ambiguous (where detection fails)
-    print("\n\nTEST 2: Ambiguous/sarcastic input")
-    bot.compare_methods("Oh great, another amazing day. Just wonderful.")
+tokenizer = AutoTokenizer.from_pretrained(
+    base_model_name,
+    trust_remote_code=True
+)
 
-if __name__ == "__main__":
-    run_assignment_tests()
+# Set pad token if not present
+if tokenizer.pad_token is None:
+    tokenizer.pad_token = tokenizer.eos_token
+
+# Load and format dataset
+dataset = load_dataset("dair-ai/emotion", split="train")
+split_dataset = dataset.train_test_split(test_size=0.2, seed=42)
+
+# Emotion label mapping
+label_map = {0: "sadness", 1: "joy", 2: "love", 3: "anger", 4: "fear", 5: "surprise"}
+
+def format_to_gemma_chat(example):
+    text = example["text"]
+    label = label_map[example["label"]]
+    
+    # Format: <start_of_turn>user\nprompt<end_of_turn>\n<start_of_turn>model\nresponse<end_of_turn>\n
+    formatted = (
+        f"<start_of_turn>user\n"
+        f"Respond with the following emotion: {label}.<end_of_turn>\n"
+        f"<start_of_turn>model\n"
+        f"{text}<end_of_turn>\n"
+    )
+    
+    return {"text": formatted}
+
+# Apply formatting
+tokenized_dataset = split_dataset.map(format_to_gemma_chat)
+
+# Training configuration
+training_arguments = SFTConfig(
+    output_dir="./results",
+    num_train_epochs=1,
+    per_device_train_batch_size=48,
+    gradient_accumulation_steps=1,
+    optim="adamw_torch",
+    save_steps=1000,
+    logging_steps=200,
+    learning_rate=1e-6,
+    weight_decay=0.001,
+    bf16=True,
+    max_grad_norm=0.3,
+    warmup_ratio=0.03,
+    group_by_length=True,
+    lr_scheduler_type="constant",
+    report_to="tensorboard",
+    dataset_text_field="text",
+    max_length=256,
+    packing=False,
+)
+
+# LoRA configuration
+peft_config = LoraConfig(
+    lora_alpha=16,
+    lora_dropout=0.1,
+    r=64,
+    bias="none",
+    task_type="CAUSAL_LM",
+    target_modules=["q_proj", "v_proj", "k_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+)
+
+# Create trainer
+sft_trainer = SFTTrainer(
+    model=base_model,
+    train_dataset=tokenized_dataset["train"],
+    eval_dataset=tokenized_dataset["test"],
+    peft_config=peft_config,
+    processing_class=tokenizer,
+    args=training_arguments,
+)
+
+# Print trainable parameters
+sft_trainer.model.print_trainable_parameters()
+
+# Train
+sft_trainer.train(resume_from_checkpoint=False)
+
+# Save adapter
+sft_trainer.model.save_pretrained(adapter_name)
+
+# Merge and save
+merged_model = sft_trainer.model.merge_and_unload()
+merged_model.save_pretrained("google/gemma-3-1b-it-emotion")
+tokenizer.save_pretrained("google/gemma-3-1b-it-emotion")

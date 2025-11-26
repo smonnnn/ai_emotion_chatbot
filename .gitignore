@@ -16,6 +16,8 @@ venv.bak/
 *.pt
 *.onnx
 
+google
+
 # Jupyter Notebook
 .ipynb_checkpoints
 
